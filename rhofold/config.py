@@ -23,6 +23,9 @@ rhofold_config = mlc.ConfigDict(
             'msa_depth': 128,
             'frame_version': 'v5.0',
             "eps": 1e-8,
+            "e2e_min_chunk_size": 64,
+            "e2e_offload": True,
+            "structure_offload": True,
         },
         "model": {
             "input_embedder": {
@@ -60,6 +63,7 @@ rhofold_config = mlc.ConfigDict(
                 "no_heads_pair": 4,
                 "no_blocks": 12,
                 "transition_n": 4,
+                "tune_chunk_size": True,
             },
             "structure_module": {
                 "c_s": 384,
