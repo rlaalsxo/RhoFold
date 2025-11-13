@@ -165,6 +165,8 @@ def _extract_hit_seqs_from_blast_xml(
 
 from Bio import SeqIO  # 파일 상단 import 추가 필요
 
+from Bio import SeqIO  # 파일 상단 어딘가에 이미 있을 수도 있습니다.
+
 def _run_muscle_and_write_a3m(
     query_seq,
     hit_seqs,
@@ -172,12 +174,12 @@ def _run_muscle_and_write_a3m(
     logger=None,
 ):
     """
-    1) query + BLAST hit 서열로 MUSCLE MSA 수행
-    2) gap-column 삭제 없이 MUSCLE 정렬을 그대로 A3M으로 저장
-    3) 사용된 입력 서열을 모두 로깅
+    1) query + hit 서열로 MUSCLE 정렬 수행
+    2) 정렬 결과에서 'query에 "-"가 있는 column'만 제거 → 최종 길이를 원래 query 길이(예: 100)로 맞춤
+    3) A3M에서는 항상 query를 첫 번째 서열로 기록
     """
 
-    # BLAST hit이 없으면 single-sequence A3M 생성
+    # BLAST hit 없음 → single sequence
     if not hit_seqs:
         if logger:
             logger.warning("BLAST hit이 없어 single-sequence A3M만 생성합니다.")
@@ -194,9 +196,9 @@ def _run_muscle_and_write_a3m(
         msa_input = tmpdir / "msa_input.fasta"
         msa_aligned = tmpdir / "msa_aligned.fasta"
 
-        # ------------------------------------------
+        # ---------------------------
         # 1) query + hit FASTA 작성
-        # ------------------------------------------
+        # ---------------------------
         with open(msa_input, "w") as f:
             f.write(">query\n")
             f.write(query_seq + "\n")
@@ -204,7 +206,7 @@ def _run_muscle_and_write_a3m(
                 f.write(f">hit_{i}\n")
                 f.write(seq + "\n")
 
-        # ★ MUSCLE 입력 서열 전체 출력
+        # MUSCLE 입력 서열 로그
         if logger:
             logger.info("===== MUSCLE INPUT SEQUENCES =====")
             logger.info(f"Query (length={len(query_seq)}): {query_seq}")
@@ -224,39 +226,102 @@ def _run_muscle_and_write_a3m(
         ]
         if logger:
             logger.info("Running MUSCLE: " + " ".join(cmd))
-
         subprocess.run(cmd, check=True)
 
         # ------------------------------------------
-        # 3) MUSCLE 정렬 읽기 (gap-column 삭제 없음)
+        # 3) MUSCLE 정렬 읽기
+        #    → '진짜 query' 레코드 기준으로 gap column 제거
         # ------------------------------------------
         records = list(SeqIO.parse(str(msa_aligned), "fasta"))
         if not records:
             raise RuntimeError("MUSCLE 정렬 결과가 비어 있습니다.")
 
-        L_align = len(str(records[0].seq))
+        # (1) MUSCLE output에서 query 레코드 찾기
+        query_rec = None
+        for rec in records:
+            # FASTA 헤더가 '>query' 이므로 id 또는 description으로 찾는다
+            if rec.id == "query" or rec.description.split()[0] == "query":
+                query_rec = rec
+                break
+
+        if query_rec is None:
+            raise RuntimeError("MUSCLE 정렬 결과에서 'query' 서열을 찾지 못했습니다.")
+
+        aligned_query = str(query_rec.seq)
+        L_align = len(aligned_query)
+
+        # (2) query에서 gap이 아닌 column 인덱스만 남기기
+        keep_indices = [i for i, ch in enumerate(aligned_query) if ch != "-"]
+        L_nogap = len(keep_indices)
 
         if logger:
-            logger.info(f"MUSCLE aligned length = {L_align}")
-            logger.info("gap-column 삭제 없이 그대로 A3M 저장합니다.")
+            logger.info(
+                f"MUSCLE aligned length = {L_align}, "
+                f"query_non_gap_length = {L_nogap}, "
+                f"original_query_length = {len(query_seq)}"
+            )
+
+        # (3) 안전 검증: 탈갭 후 길이 == 원래 query 길이(100) 이어야 한다
+        if L_nogap != len(query_seq):
+            if logger:
+                logger.error(
+                    "탈갭 query 길이(%d)와 원래 query 길이(%d)가 다릅니다.",
+                    L_nogap,
+                    len(query_seq),
+                )
+                logger.error("aligned query: %s", aligned_query)
+                logger.error("original query: %s", query_seq)
+            raise RuntimeError("탈갭 query 길이와 원래 query 길이가 일치하지 않습니다.")
+
+        def strip_cols(seq_str: str) -> str:
+            """keep_indices에 해당하는 column만 남긴 서열 반환"""
+            return "".join(seq_str[i] for i in keep_indices)
 
         # ------------------------------------------
-        # 4) A3M 저장 (정렬 그대로)
+        # 4) A3M 저장
+        #    - 항상 query를 첫 번째 서열로
+        #    - 모든 서열 길이가 정확히 len(query_seq) (=100) 인지 보증
         # ------------------------------------------
         with open(output_a3m, "w") as out_f:
-            for rec in records:
-                out_f.write(f">{rec.description}\n")
-                out_f.write(str(rec.seq) + "\n")
+            # 4-1. query 먼저 기록
+            query_a3m = strip_cols(str(query_rec.seq))
 
-        # ★ 정렬 결과 출력 (원하시면 유지)
+            # query_a3m에서 gap 제거하면 원본 query와 일치해야 함
+            if query_a3m.replace("-", "") != query_seq:
+                if logger:
+                    logger.error("A3M query와 원본 query가 일치하지 않습니다.")
+                    logger.error("A3M query (degapped): %s", query_a3m.replace("-", ""))
+                    logger.error("original query: %s", query_seq)
+                raise RuntimeError("A3M query와 원본 query가 일치하지 않습니다.")
+
+            out_f.write(">query\n")
+            out_f.write(query_a3m + "\n")
+
+            # 4-2. 나머지 hit 서열들
+            for rec in records:
+                if rec is query_rec:
+                    continue  # 이미 썼음
+                seq_str = str(rec.seq)
+                if len(seq_str) != L_align:
+                    raise RuntimeError("MSA 내부에서 서열 길이가 서로 다릅니다.")
+                new_seq = strip_cols(seq_str)
+                # 여기서 new_seq 길이는 반드시 len(query_seq) (예: 100)
+                out_f.write(f">{rec.description}\n")
+                out_f.write(new_seq + "\n")
+
+        # ------------------------------------------
+        # 5) 로그
+        # ------------------------------------------
         if logger:
-            logger.info("===== MUSCLE ALIGNED SEQUENCES =====")
+            logger.info(
+                "A3M 파일 저장 완료 (query-gap column 제거 후 L=%d): %s",
+                len(query_seq),
+                output_a3m,
+            )
+            logger.info("===== MUSCLE ALIGNED SEQUENCES (RAW) =====")
             for rec in records:
                 logger.info(f"{rec.id}: {rec.seq}")
-            logger.info("=====================================")
-
-    if logger:
-        logger.info(f"A3M 파일 저장 완료 (gap-column 제거 없음): {output_a3m}")
+            logger.info("=========================================")
 
 def build_a3m_with_ncbi_blast(
     input_fas: str,
