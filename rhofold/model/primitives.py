@@ -290,30 +290,18 @@ class Attention(nn.Module):
         q_x: torch.Tensor,
         kv_x: torch.Tensor,
         biases: Optional[List[torch.Tensor]] = None,
+        use_memory_efficient_kernel: bool = False,
     ) -> torch.Tensor:
-        """
-        Args:
-            q_x:
-                [*, Q, C_q] query data
-            kv_x:
-                [*, K, C_k] key data
-            biases:
-                List of biases that broadcast to [*, H, Q, K]
-        Returns
-            [*, Q, C_q] attention update
-        """
-        if(biases is None):
+        # 현재 구현에서는 use_memory_efficient_kernel을 사용하지 않습니다.
+        # (MSA/Triangle에서 넘겨 주기만 하고, 여기서는 무시)
+        if biases is None:
             biases = []
 
-        # [*, H, Q/K, C_hidden]
         q, k, v = self._prep_qkv(q_x, kv_x)
-
         o = _attention(q, k, v, biases)
         o = o.transpose(-2, -3)
         o = self._wrap_up(o, q_x)
-
         return o
-
 
 class GlobalAttention(nn.Module):
     def __init__(self, c_in, c_hidden, no_heads, inf, eps):
