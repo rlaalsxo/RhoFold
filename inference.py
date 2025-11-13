@@ -309,13 +309,13 @@ def main(config):
     # Input seq, MSA
     logger.info(f"Input_fas {config.input_fas}")
 
-    if config.single_seq_pred:
-        config.input_a3m = config.input_fas
-        logger.info(
-            "Input_a3m is None, the modeling will run using single sequence only (input_fas)"
-        )
+    # if config.single_seq_pred:
+    #     config.input_a3m = config.input_fas
+    #     logger.info(
+    #         "Input_a3m is None, the modeling will run using single sequence only (input_fas)"
+    #     )
 
-    elif config.input_a3m is None:
+    if config.input_a3m is None:
         # 여기서 우리의 새 로직: NCBI BLAST + MUSCLE로 A3M 생성
         config.input_a3m = f'{config.output_dir}/seq.a3m'
         logger.info(
