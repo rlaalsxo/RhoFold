@@ -162,11 +162,6 @@ def _extract_hit_seqs_from_blast_xml(
         logger.info(f"BLAST XML에서 {len(hit_seqs)}개의 hit 서열을 추출했습니다.")
     return hit_seqs
 
-
-from Bio import SeqIO  # 파일 상단 import 추가 필요
-
-from Bio import SeqIO  # 파일 상단 어딘가에 이미 있을 수도 있습니다.
-
 def _run_muscle_and_write_a3m(
     query_seq,
     hit_seqs,
@@ -348,11 +343,12 @@ def build_a3m_with_ncbi_blast(
         program="blastn",
         logger=logger,
     )
+    min_len = int(len(query_seq) * 0.5)
 
     hit_seqs = _extract_hit_seqs_from_blast_xml(
         xml_text=xml_text,
         max_hits=hitlist_size,
-        min_align_len=30,
+        min_align_len=min_len,
         logger=logger,
     )
 
@@ -426,7 +422,7 @@ def main(config):
             input_fas=config.input_fas,
             output_a3m=config.input_a3m,
             logger=logger,
-            hitlist_size=100,
+            hitlist_size=200,
         )
 
         logger.info(f"Input_a3m {config.input_a3m}")
