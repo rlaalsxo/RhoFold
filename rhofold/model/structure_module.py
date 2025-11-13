@@ -770,9 +770,13 @@ class StructureModule(nn.Module):
             # [*, N]
             mask = s.new_ones(s.shape[:-1])
 
-        # 간단한 디버그 플래그 / 헬퍼
-        debug_numerics = getattr(getattr(self, "config", None), "globals", None)
-        debug_numerics = getattr(debug_numerics, "debug_numerics", False) if debug_numerics is not None else False
+        # 디버그 플래그 / 헬퍼
+        # 수정 전:
+        # debug_numerics = getattr(getattr(self, "config", None), "globals", None)
+        # debug_numerics = getattr(debug_numerics, "debug_numerics", False) if debug_numerics is not None else False
+
+        # 수정 후: StructureModule 인스턴스의 속성을 그대로 사용
+        debug_numerics = getattr(self, "debug_numerics", False)
 
         def _debug_stats(name, t):
             if (not debug_numerics) or (t is None):
@@ -889,3 +893,4 @@ class StructureModule(nn.Module):
         outputs["cords_c1'"] = [cord[0][:, 1, :].unsqueeze(0) for cord in cord_list]
 
         return outputs
+

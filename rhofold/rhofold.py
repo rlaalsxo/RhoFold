@@ -40,6 +40,10 @@ class RhoFold(nn.Module):
         self.structure_module = StructureModule(
             **config.model.structure_module,
         )
+         # ★ 추가: globals.debug_numerics 값을 StructureModule에도 넘겨줌
+        self.structure_module.debug_numerics = getattr(
+            config.globals, "debug_numerics", False
+        )
         self.recycle_embnet = RecyclingEmbedder(
             **config.model.recycling_embedder,
         )
