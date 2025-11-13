@@ -172,12 +172,12 @@ def _run_muscle_and_write_a3m(
     logger=None,
 ):
     """
-    1) query + hit 서열로 MUSCLE 정렬 수행
-    2) 정렬 결과에서 'query에 '-'인 열'을 제거하여 query 길이와 동일하게 맞춤
-    3) 정렬에 사용된 모든 입력 서열을 출력 (요청 추가)
+    1) query + BLAST hit 서열로 MUSCLE MSA 수행
+    2) gap-column 삭제 없이 MUSCLE 정렬을 그대로 A3M으로 저장
+    3) 사용된 입력 서열을 모두 로깅
     """
 
-    # BLAST hit 없음 → single sequence
+    # BLAST hit이 없으면 single-sequence A3M 생성
     if not hit_seqs:
         if logger:
             logger.warning("BLAST hit이 없어 single-sequence A3M만 생성합니다.")
@@ -194,9 +194,9 @@ def _run_muscle_and_write_a3m(
         msa_input = tmpdir / "msa_input.fasta"
         msa_aligned = tmpdir / "msa_aligned.fasta"
 
-        # ---------------------------
+        # ------------------------------------------
         # 1) query + hit FASTA 작성
-        # ---------------------------
+        # ------------------------------------------
         with open(msa_input, "w") as f:
             f.write(">query\n")
             f.write(query_seq + "\n")
@@ -204,7 +204,7 @@ def _run_muscle_and_write_a3m(
                 f.write(f">hit_{i}\n")
                 f.write(seq + "\n")
 
-        # ★ 추가 기능: MUSCLE 입력 FASTA 전체 출력
+        # ★ MUSCLE 입력 서열 전체 출력
         if logger:
             logger.info("===== MUSCLE INPUT SEQUENCES =====")
             logger.info(f"Query (length={len(query_seq)}): {query_seq}")
@@ -224,43 +224,31 @@ def _run_muscle_and_write_a3m(
         ]
         if logger:
             logger.info("Running MUSCLE: " + " ".join(cmd))
+
         subprocess.run(cmd, check=True)
 
         # ------------------------------------------
-        # 3) MUSCLE 정렬 읽기 + query gap column 삭제
+        # 3) MUSCLE 정렬 읽기 (gap-column 삭제 없음)
         # ------------------------------------------
         records = list(SeqIO.parse(str(msa_aligned), "fasta"))
         if not records:
             raise RuntimeError("MUSCLE 정렬 결과가 비어 있습니다.")
 
-        query_rec = records[0]
-        aligned_query = str(query_rec.seq)
-        L_align = len(aligned_query)
-
-        keep_indices = [i for i, ch in enumerate(aligned_query) if ch != "-"]
+        L_align = len(str(records[0].seq))
 
         if logger:
-            logger.info(
-                f"MUSCLE aligned length = {L_align}, "
-                f"query non-gap remaining length = {len(keep_indices)}"
-            )
-
-        def strip_cols(seq_str):
-            return "".join(seq_str[i] for i in keep_indices)
+            logger.info(f"MUSCLE aligned length = {L_align}")
+            logger.info("gap-column 삭제 없이 그대로 A3M 저장합니다.")
 
         # ------------------------------------------
-        # 4) A3M 저장
+        # 4) A3M 저장 (정렬 그대로)
         # ------------------------------------------
         with open(output_a3m, "w") as out_f:
             for rec in records:
-                seq_str = str(rec.seq)
-                if len(seq_str) != L_align:
-                    raise RuntimeError("MSA 내부에서 서열 길이가 서로 다릅니다.")
-                new_seq = strip_cols(seq_str)
                 out_f.write(f">{rec.description}\n")
-                out_f.write(new_seq + "\n")
+                out_f.write(str(rec.seq) + "\n")
 
-        # ★ 필요하면 정렬 결과도 출력할 수 있음 (주석 해제)
+        # ★ 정렬 결과 출력 (원하시면 유지)
         if logger:
             logger.info("===== MUSCLE ALIGNED SEQUENCES =====")
             for rec in records:
@@ -268,7 +256,7 @@ def _run_muscle_and_write_a3m(
             logger.info("=====================================")
 
     if logger:
-        logger.info(f"A3M 파일 저장 완료 (MUSCLE MSA, query-gap col 제거): {output_a3m}")
+        logger.info(f"A3M 파일 저장 완료 (gap-column 제거 없음): {output_a3m}")
 
 def build_a3m_with_ncbi_blast(
     input_fas: str,
