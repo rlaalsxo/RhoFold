@@ -30,17 +30,18 @@ from rhofold.utils.alphabet import RNAAlphabet
 from rhofold.utils.converter import RNAConverter
 
 class RefineNet(nn.Module):
-    """"""
-
-    def __init__(self, dim = 64, is_pos_emb = True, n_layer = 4, enable = True, **kwargs):
-        """Constructor function."""
-
+    def __init__(self, dim = 64, is_pos_emb = True, n_layer = 4, enable = True,
+                 max_coord_abs: float = 1e3,  # 안전 임계값(Angstrom 기준)
+                 **kwargs):
         super().__init__()
 
         self.is_pos_emb = is_pos_emb
         self.alphabet = RNAAlphabet.from_architecture('RNA')
         self.embed_tokens = nn.Embedding(len(self.alphabet), dim)
         self.enable = enable
+
+        # 좌표 폭주 체크 기준 (너무 작게 잡으면 정상도 막히니 여유 있게)
+        self.max_coord_abs = max_coord_abs
 
         if self.is_pos_emb:
             self.embed_positions = PosEmbedding(4096, dim, self.alphabet.padding_idx)
@@ -52,15 +53,12 @@ class RefineNet(nn.Module):
 
     def forward(self, tokens, cords):
 
-        """Perform the forward pass.
-
-        Args:
-
-        Returns:
-        """
-
         if not self.enable:
             return cords
+
+        # 원본 좌표 백업 (converter에서 나온 안정적인 좌표)
+        # shape: [B, L*23, 3]
+        cords_in = cords
 
         tokens = tokens[:, 0, :]
         tokens = tokens.unsqueeze(-1).repeat(1, 1, 23)
@@ -68,36 +66,65 @@ class RefineNet(nn.Module):
         cords = cords.reshape([b, l, n, 3])
 
         fea = self.embed_tokens(tokens)
-
         b, l, n, _ = fea.shape
 
         if self.is_pos_emb:
             fea += self.embed_positions(tokens.reshape(b * l, n)).view(fea.size())
 
-        out = self.refine_layer0(fea.reshape([ b * l, n, -1]), cords.reshape([ b * l, n, -1]), is_fea = True)
+        out = self.refine_layer0(
+            fea.reshape([b * l, n, -1]),
+            cords.reshape([b * l, n, -1]),
+            is_fea=True,
+        )
         fea, cords = out[-1]
 
-        fea = fea.reshape([b, l, n, -1]).transpose(1,2)
-        cords = cords.reshape([b, l, n, -1]).transpose(1,2)
+        fea = fea.reshape([b, l, n, -1]).transpose(1, 2)
+        cords = cords.reshape([b, l, n, -1]).transpose(1, 2)
 
-        out = self.refine_layer1(fea.reshape([ b * n, l, -1]), cords.reshape([ b * n, l, -1]), is_fea = True)
+        out = self.refine_layer1(
+            fea.reshape([b * n, l, -1]),
+            cords.reshape([b * n, l, -1]),
+            is_fea=True,
+        )
         fea, cords = out[-1]
 
-        fea = fea.reshape([b, n, l, -1]).transpose(1,2)
-        cords = cords.reshape([b, n, l, -1]).transpose(1,2)
+        fea = fea.reshape([b, n, l, -1]).transpose(1, 2)
+        cords = cords.reshape([b, n, l, -1]).transpose(1, 2)
 
-        out = self.refine_layer2(fea.reshape([ b * l, n, -1]), cords.reshape([ b * l, n, -1]), is_fea = True)
+        out = self.refine_layer2(
+            fea.reshape([b * l, n, -1]),
+            cords.reshape([b * l, n, -1]),
+            is_fea=True,
+        )
         fea, cords = out[-1]
 
-        fea = fea.reshape([b, l, n, -1]).transpose(1,2)
-        cords = cords.reshape([b, l, n, -1]).transpose(1,2)
+        fea = fea.reshape([b, l, n, -1]).transpose(1, 2)
+        cords = cords.reshape([b, l, n, -1]).transpose(1, 2)
 
-        out = self.refine_layer3(fea.reshape([ b * n, l, -1]), cords.reshape([ b * n, l, -1]), is_fea = True)
+        out = self.refine_layer3(
+            fea.reshape([b * n, l, -1]),
+            cords.reshape([b * n, l, -1]),
+            is_fea=True,
+        )
         fea, cords = out[-1]
 
-        cords = cords.reshape([b, n, l, -1]).transpose(1,2)
-
+        cords = cords.reshape([b, n, l, -1]).transpose(1, 2)
         cords = cords.reshape([b, l * n, 3])
+
+        # ===== 여기서 수치 폭주 검사 후, 이상하면 원본 좌표로 되돌림 =====
+        with torch.no_grad():
+            has_nan = torch.isnan(cords).any().item()
+            has_inf = torch.isinf(cords).any().item()
+            max_abs = cords.detach().abs().max().item()
+
+        if has_nan or has_inf or max_abs > self.max_coord_abs:
+            print(
+                f"[WARN][RefineNet] coord explosion detected: "
+                f"nan={has_nan}, inf={has_inf}, max_abs={max_abs:.4e} "
+                f"=> fallback to converter cords"
+            )
+            # converter에서 나온 cords_in 그대로 반환
+            return cords_in
 
         return cords
 
