@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 from pathlib import Path
 import os
@@ -7,13 +8,11 @@ import subprocess
 import tempfile
 from io import StringIO
 import typing
-from __future__ import annotations
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 import requests
 from Bio.Blast import NCBIXML  # pip install biopython
-
 from rhofold.rhofold import RhoFold
 from rhofold.config import rhofold_config
 from rhofold.utils import get_device, save_ss2ct, timing
