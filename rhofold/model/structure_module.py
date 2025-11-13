@@ -763,30 +763,38 @@ class StructureModule(nn.Module):
         _offload_inference=False,
         _no_blocks = None,
     ):
-        """
-        Args:
-            e2eformer_output_dict:
-                Dictionary containing:
-                    "single":
-                        [*, N_res, C_s] single representation
-                    "pair":
-                        [*, N_res, N_res, C_z] pair representation
-            mask:
-                Optional [*, N_res] sequence mask
-        Returns:
-            A dictionary of outputs
-        """
+
         s = e2eformer_output_dict["single"]
         
         if mask is None:
             # [*, N]
             mask = s.new_ones(s.shape[:-1])
 
+        # 간단한 디버그 플래그 / 헬퍼
+        debug_numerics = getattr(getattr(self, "config", None), "globals", None)
+        debug_numerics = getattr(debug_numerics, "debug_numerics", False) if debug_numerics is not None else False
+
+        def _debug_stats(name, t):
+            if (not debug_numerics) or (t is None):
+                return
+            with torch.no_grad():
+                has_nan = torch.isnan(t).any().item()
+                has_inf = torch.isinf(t).any().item()
+                max_abs = t.detach().abs().max().item()
+                min_val = t.detach().min().item()
+                max_val = t.detach().max().item()
+                print(f"[DEBUG][StructureModule:{name}] "
+                      f"shape={tuple(t.shape)}, "
+                      f"nan={has_nan}, inf={has_inf}, "
+                      f"min={min_val:.4e}, max={max_val:.4e}, max_abs={max_abs:.4e}")
+
         # [*, N, C_s]
         s = self.layer_norm_s(s)
+        _debug_stats("s_after_layer_norm_s", s)
 
         # [*, N, N, C_z]
         z = self.layer_norm_z(e2eformer_output_dict["pair"])
+        _debug_stats("z_after_layer_norm_z", z)
 
         z_reference_list = None
         if(_offload_inference):
@@ -797,6 +805,7 @@ class StructureModule(nn.Module):
         # [*, N, C_s]
         s_initial = s
         s = self.linear_in(s)
+        _debug_stats("s_after_linear_in", s)
 
         # [*, N]
         rigids = Rigid.identity(
@@ -820,14 +829,18 @@ class StructureModule(nn.Module):
                 _offload_inference=_offload_inference, 
                 _z_reference_list=z_reference_list
             )
+            _debug_stats(f"s_after_ipa_block_{i}", s)
+
             s = self.layer_norm_ipa(s)
             s = self.transition(s)
+            _debug_stats(f"s_after_transition_block_{i}", s)
            
             # [*, N]
             rigids = rigids.compose_q_update_vec(self.bb_update(s))
 
             # [*, N, 7, 2]
             unnormalized_angles, angles = self.angle_resnet(s, s_initial)
+            _debug_stats(f"angles_block_{i}", angles)
 
             scaled_rigids = rigids.scale_translation(self.trans_scale_factor)
             
@@ -852,12 +865,27 @@ class StructureModule(nn.Module):
 
         outputs = dict_multimap(torch.stack, outputs)
 
-        cords, mask = self.converter.build_cords(seq, outputs['frames'][-1], outputs['angles'][-1], rtn_cmsk=True)
+        # 여기서 converter가 만드는 좌표를 먼저 체크
+        cords, mask = self.converter.build_cords(
+            seq, outputs['frames'][-1], outputs['angles'][-1], rtn_cmsk=True
+        )
+        _debug_stats("cords_from_converter", cords)
+
         cord_list = [[cords, mask]]
         if self.refinenet is not None:
-            outputs['cord_tns_pred'] = [ self.refinenet(msa_tokens, cord[0].reshape([s.shape[0], -1, 3])) for cord in cord_list]
+            refined = [
+                self.refinenet(
+                    msa_tokens,
+                    cord[0].reshape([s.shape[0], -1, 3])
+                ) for cord in cord_list
+            ]
+            outputs['cord_tns_pred'] = refined
+            _debug_stats("cords_after_refinenet", refined[0])
         else:
-            outputs['cord_tns_pred'] = [ cord[0].reshape([s.shape[0], -1, 3]) for cord in cord_list]
+            raw = [cord[0].reshape([s.shape[0], -1, 3]) for cord in cord_list]
+            outputs['cord_tns_pred'] = raw
+            _debug_stats("cords_no_refinenet", raw[0])
+
         outputs["cords_c1'"] = [cord[0][:, 1, :].unsqueeze(0) for cord in cord_list]
 
         return outputs

@@ -90,6 +90,24 @@ class RhoFold(nn.Module):
 
         device = tokens.device
 
+        # 디버그 플래그
+        debug_numerics = getattr(self.config.globals, "debug_numerics", False)
+
+        # 간단한 디버그 헬퍼
+        def _debug_stats(name, t):
+            if (not debug_numerics) or (t is None):
+                return
+            with torch.no_grad():
+                has_nan = torch.isnan(t).any().item()
+                has_inf = torch.isinf(t).any().item()
+                max_abs = t.detach().abs().max().item()
+                min_val = t.detach().min().item()
+                max_val = t.detach().max().item()
+                print(f"[DEBUG][{name}] "
+                      f"shape={tuple(t.shape)}, "
+                      f"nan={has_nan}, inf={has_inf}, "
+                      f"min={min_val:.4e}, max={max_val:.4e}, max_abs={max_abs:.4e}")
+
         # 1단계: chunk 최소 크기
         min_chunk_size = getattr(self.config.globals, "e2e_min_chunk_size", None)
 
@@ -106,6 +124,8 @@ class RhoFold(nn.Module):
             rna_fm_tokens=rna_fm_tokens,
             is_BKL=True,
         )
+        _debug_stats("msa_fea_after_msa_embedder", msa_fea)
+        _debug_stats("pair_fea_after_msa_embedder", pair_fea)
 
         if exists(self.recycle_embnet) and exists(recycling_inputs):
             msa_fea_up, pair_fea_up = self.recycle_embnet(
@@ -115,21 +135,26 @@ class RhoFold(nn.Module):
             )
             msa_fea[..., 0, :, :] += msa_fea_up
             pair_fea = add(pair_fea, pair_fea_up, inplace=False)
+            _debug_stats("msa_fea_after_recycle", msa_fea)
+            _debug_stats("pair_fea_after_recycle", pair_fea)
 
         msa_mask = torch.ones(msa_fea.shape[:3], device=device)
         pair_mask = torch.ones(pair_fea.shape[:3], device=device)
 
         # 2단계 핵심: offload 경로 vs 기존 경로 분기
         if use_offload and chunk_size is not None:
-            # E2EformerStack._forward_offload 경로 사용 :contentReference[oaicite:0]{index=0}
+            # E2EformerStack._forward_offload 경로 사용
             msa_fea, pair_fea, single_fea = self.e2eformer._forward_offload(
                 input_tensors=[msa_fea, pair_fea],
                 msa_mask=msa_mask,
                 pair_mask=pair_mask,
                 chunk_size=chunk_size,
             )
+            _debug_stats("msa_fea_after_e2e_offload", msa_fea)
+            _debug_stats("pair_fea_after_e2e_offload", pair_fea)
+            _debug_stats("single_fea_after_e2e_offload", single_fea)
         else:
-            # 1단계에서 쓰던 기존 forward 경로 (chunking만)
+            # 1단계에서 쓰던 기존 forward 경로 (chunking만 또는 완전 비-chunk)
             msa_fea, pair_fea, single_fea = self.e2eformer(
                 m=msa_fea,
                 z=pair_fea,
@@ -137,9 +162,16 @@ class RhoFold(nn.Module):
                 pair_mask=pair_mask,
                 chunk_size=chunk_size,
             )
+            _debug_stats("msa_fea_after_e2e", msa_fea)
+            _debug_stats("pair_fea_after_e2e", pair_fea)
+            _debug_stats("single_fea_after_e2e", single_fea)
 
         output = self.forward_cords(tokens, single_fea, pair_fea, seq)
+
+        # forward_cords 안에서 cords 관련 디버그를 또 찍을 것이므로,
+        # 여기서는 pair_fea만 한 번 더 확인
         output.update(self.forward_heads(pair_fea))
+        _debug_stats("pair_fea_before_heads", pair_fea)
 
         recycling_outputs = {
             'single_fea': msa_fea[..., 0, :, :].detach(),
@@ -148,7 +180,6 @@ class RhoFold(nn.Module):
         }
 
         return output, recycling_outputs
-
 
     def forward(self,
                 tokens,

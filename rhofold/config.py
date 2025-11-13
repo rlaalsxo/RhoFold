@@ -24,8 +24,9 @@ rhofold_config = mlc.ConfigDict(
             'frame_version': 'v5.0',
             "eps": 1e-8,
             "e2e_min_chunk_size": 64,
-            "e2e_offload": False,
-            "structure_offload": False,
+            "e2e_offload": True,
+            "structure_offload": True,
+            "debug_numerics": True,
         },
         "model": {
             "input_embedder": {
