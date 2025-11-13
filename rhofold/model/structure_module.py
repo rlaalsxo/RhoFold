@@ -422,8 +422,12 @@ class InvariantPointAttention(nn.Module):
         Returns:
             [*, N_res, C_s] single representation update
         """
-        z = [z]
-       
+        # 수정된 부분: offload 모드에서는 호출자가 넘겨준 참조 리스트 사용
+        if _offload_inference and _z_reference_list is not None:
+            z = _z_reference_list
+        else:
+            z = [z]
+    
         #######################################
         # Generate scalar and point activations
         #######################################
@@ -558,7 +562,6 @@ class InvariantPointAttention(nn.Module):
         )
         
         return s
-
 
 class BackboneUpdate(nn.Module):
     """
