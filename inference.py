@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from io import StringIO
 import typing
-
+from __future__ import annotations
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
